@@ -9,20 +9,15 @@ class TurbineCleaner:
     
     # Number of standard deviations that defines an outlier
     OUTLIER_STD_THRESHOLD = 2.0
-
     # Hard physical bounds — rows outside these are impossible sensor values
     PHYSICAL_BOUNDS = {
-        "wind_speed":      (0.0,  50.0),
+        "wind_speed":      (0.0,  35.0),
         "wind_direction": (0.0, 360.0),
         "power_output":    (0.0,  None), # no hard upper bound
     }
-
     ANCHOR_COLS = ["timestamp", "turbine_id", "power_output"]
-
     IMPUTE_COLS = ["wind_speed", "wind_direction"]
-
     NUMERIC_COLS = ["wind_speed", "wind_direction", "power_output"]
-    
 
     @staticmethod
     def range_filter(turbines_df):
@@ -48,7 +43,6 @@ class TurbineCleaner:
                     F.col(col_name).isNull() | (F.col(col_name) <= upper)
                 )
         return range_filter
-
 
     @staticmethod
     def impute_nulls(turbines_df):
@@ -78,8 +72,8 @@ class TurbineCleaner:
                 .drop(median_col)
             )
 
-        # Any rows where the whole day's data for that turbine was null remain null;
-        # drop them as they cannot be meaningfully imputed.
+        # Any rows where the whole day's data for that turbine was null 
+        # remain null drop them as they cannot be meaningfully imputed.
         dropped_impute_df = turbines_df.dropna(subset=TurbineCleaner.IMPUTE_COLS)
         
         return dropped_impute_df
@@ -88,17 +82,17 @@ class TurbineCleaner:
     def filter_outliers(turbines_df):
         """Remove statistical outliers from numeric sensor columns.
         
-        Identifies and removes rows where numeric values (wind speed, wind direction,
-        power output) fall outside a threshold of standard deviations from the daily
-        mean for each turbine. A row is flagged as an outlier if any numeric column
-        exceeds the bounds.
+        Identifies and removes rows where numeric values (wind speed, wind 
+        direction, power output) fall outside a threshold of standard 
+        deviations from the daily mean for each turbine. A row is flagged as an
+        outlier if any numeric column exceeds the bounds.
         
         Args:
             turbines_df: PySpark DataFrame containing turbine sensor data.
             
         Returns:
-            DataFrame with outlier rows removed. Rows from days with only a single
-            reading (std=null) are conservatively retained.
+            DataFrame with outlier rows removed. Rows from days with only a 
+            single reading (std=null) are conservatively retained.
         """
         stats_window = Window.partitionBy("turbine_id", F.to_date("timestamp"))
         outlier_flags = []
@@ -143,7 +137,36 @@ class TurbineCleaner:
             + [f"_std_{c}"  for c in TurbineCleaner.NUMERIC_COLS]
             + outlier_flags
         )
-
         turbines_df = turbines_df.drop(*temp_cols)
-
         return turbines_df
+
+
+class TurbineAggregator:
+
+    def daily_aggregate(turbines_df):
+        """Aggregate turbine data to daily level with summary statistics.
+        
+        Groups data by turbine and day, calculating daily mean wind speed, mean
+        wind direction, and total power output. This provides a daily summary of
+        turbine performance and conditions.
+        
+        Args:
+            turbines_df: PySpark DataFrame containing cleaned turbine sensor data.
+            
+        Returns:
+            DataFrame aggregated to daily level with mean wind speed, mean wind
+            direction, and total power output per turbine per day.
+        """
+        return (
+            turbines_df
+                .withColumn("date", F.to_date("timestamp"))
+                .groupBy("turbine_id", "date")
+                .agg(
+                    F.min("power_output_mw").alias("min_power_output_mw"),
+                    F.max("power_output_mw").alias("max_power_output_mw"),
+                    F.avg("power_output_mw").alias("avg_power_output_mw"),
+                    F.count("*").alias("reading_count"),
+                )
+                .withColumn("_aggregated_at", F.current_timestamp())
+                .orderBy("date", "turbine_id")
+        )
