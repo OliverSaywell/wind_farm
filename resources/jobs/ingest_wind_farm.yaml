@@ -1,0 +1,43 @@
+resources:
+  jobs:
+    ingest_wind_farm:
+      name: Process Wind Farm Data
+      description: Ingest and process Wind Farm data from landing through to gold
+      tasks:
+        - task_key: Ingest_Raw_Data
+          notebook_task:
+            notebook_path: ../src/bronze_ingest.ipynb
+            base_parameters:
+              catalog: ${catalog}
+              schema: ${schema}
+              landing_zone: ${landing_zone}
+              checkpoint_base: ${checkpoint_base}
+            source: WORKSPACE
+          environment_key: Default
+        - task_key: Process_Bronze_to_Silver
+          depends_on:
+            - task_key: Ingest_Raw_Data
+          notebook_task:
+            notebook_path: ../src/silver_clean.ipynb
+            base_parameters:
+              catalog: ${catalog}
+              schema: ${schema}
+            source: WORKSPACE
+          environment_key: Default
+        - task_key: Process_Silver_to_Gold
+          depends_on:
+            - task_key: Process_Bronze_to_Silver
+          notebook_task:
+            notebook_path: ../src/gold_aggregate.ipynb
+            base_parameters:
+              catalog: ${catalog}
+              schema: ${schema}
+            source: WORKSPACE
+          environment_key: Default
+      queue:
+        enabled: true
+      environments:
+        - environment_key: Default
+          spec:
+            environment_version: "5"
+      performance_target: PERFORMANCE_OPTIMIZED
